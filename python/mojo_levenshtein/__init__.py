@@ -16,6 +16,7 @@ __version__ = "0.1.0"
 _Weights = tuple[int, int, int]
 _ABI_INT_MAX = np.iinfo(np.int64).max
 _U32_SYMBOL_LIMIT = np.iinfo(np.uint32).max
+_WAVEFRONT_STORAGE = 2 * (2 * 384 + 3)
 
 
 def _canonical_token(value: Hashable) -> Hashable:
@@ -89,7 +90,9 @@ def _address(
     return address
 
 
-def _bit_scratch(unique: int, length: int, work_factor: int):
+def _bit_scratch(
+    unique: int, length: int, work_factor: int, minimum_work: int = 1
+):
     words = (length + 63) // 64
     hash_size = 1
     while hash_size < max(2, unique * 2):
@@ -97,7 +100,7 @@ def _bit_scratch(unique: int, length: int, work_factor: int):
     masks = np.zeros(max(1, (unique + 1) * words), dtype=np.uint64)
     keys = np.empty(hash_size, dtype=np.uint32)
     values = np.empty(hash_size, dtype=np.int64)
-    work = np.empty(max(1, work_factor * words), dtype=np.uint64)
+    work = np.empty(max(minimum_work, work_factor * words), dtype=np.uint64)
     return masks, keys, values, hash_size, work
 
 
@@ -166,7 +169,13 @@ def distance(
         if m == 0:
             result = n
         else:
-            masks, keys, values, hash_size, work = _bit_scratch(unique_b, m, 2)
+            use_wavefront = min(n, m) >= 512
+            masks, keys, values, hash_size, work = _bit_scratch(
+                unique_b,
+                m,
+                2,
+                _WAVEFRONT_STORAGE if use_wavefront else 1,
+            )
             result = int(
                 lib().ml_distance_unit_u32(
                     _address(a, np.uint32, n),
@@ -178,6 +187,7 @@ def distance(
                     _address(values, np.int64, hash_size),
                     hash_size,
                     _address(work, np.uint64, 2 * ((m + 63) // 64)),
+                    use_wavefront,
                 )
             )
     else:

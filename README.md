@@ -77,26 +77,30 @@ of five runs on identical inputs.
 
 | operation | Mojo | python-Levenshtein | upstream / Mojo |
 | --- | ---: | ---: | ---: |
-| distance, bytes length 10,000 | 5.940 ms | 5.434 ms | 0.91x |
-| distance, Unicode length 4,000 | 1.546 ms | 1.009 ms | 0.65x |
-| ratio, bytes length 20,000 | 11.025 ms | 11.958 ms | 1.08x |
-| weighted distance, length 2,000 | 9.682 ms | 12.138 ms | 1.25x |
+| distance, bytes length 10,000 | 0.294 ms | 5.365 ms | 18.23x |
+| distance, Unicode length 4,000 | 0.794 ms | 1.073 ms | 1.35x |
+| ratio, bytes length 20,000 | 10.443 ms | 11.626 ms | 1.11x |
+| weighted distance, length 2,000 | 9.013 ms | 11.418 ms | 1.27x |
 
-In this run the ratio and weighted cases were faster than upstream, while both
-ordinary distance cases were slower. Results are workload- and
-machine-specific. No GPU or multithreaded path is included.
+All four cases were faster than upstream in this run. Results are workload- and
+machine-specific. No GPU or multithreaded path is included: the edit-distance
+recurrences have serial row, score, or carry dependencies, and their arithmetic
+intensity is below the roughly two-operations-per-byte threshold that could
+justify transfer and launch overhead on a GPU. The independent scratch fills
+are too small to repay CPU thread-launch overhead.
 
 ## How it works
 
-The common unit-cost distance path uses the multiword Myers bit-vector
-algorithm. It processes 64 pattern positions per machine word and supports
-patterns longer than one word. Its carry-preserving update is fused into one
-pass over two state rows, avoiding three temporary rows. Native-width SIMD
-scans common prefixes and suffixes and fills scratch buffers, with scalar tail
-loops for every remainder. `ratio` is upstream's normalized indel similarity,
-so its kernel computes longest common subsequence length with a multiword
-bitset recurrence. Arbitrary nonnegative operation weights use a one-row
-dynamic program.
+The common unit-cost distance path first uses a bounded exact wavefront for
+large inputs with at most 384 edits. Native-width SIMD extends matching runs,
+with a scalar gate and tail loop for mismatches and remainders. More dissimilar
+inputs fall back to the multiword Myers bit-vector algorithm, which processes
+64 pattern positions per machine word. Its fused two-row update uses a 128-bit
+sum to preserve carries without temporary rows. SIMD also scans common prefixes
+and suffixes and fills scratch buffers. `ratio` is upstream's normalized indel
+similarity, so its kernel computes longest common subsequence length with a
+multiword bitset recurrence. Arbitrary nonnegative operation weights use a
+one-row dynamic program.
 
 Python converts strings to contiguous UTF-32 code points, bytes to unsigned
 values, and general hashable sequences to shared integer symbol IDs. NumPy owns

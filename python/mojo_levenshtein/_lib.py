@@ -16,7 +16,7 @@ LIB = os.environ.get("MOJO_LEVENSHTEIN_LIB") or os.path.join(
 I = ctypes.c_int64
 
 _SIGNATURES = {
-    "ml_distance_unit_u32": ([I] * 9, I),
+    "ml_distance_unit_u32": ([I] * 10, I),
     "ml_distance_weighted_u32": ([I] * 8, I),
     "ml_indel_distance_u32": ([I] * 9, I),
 }

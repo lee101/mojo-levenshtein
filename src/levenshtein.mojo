@@ -5,6 +5,7 @@ from std.sys.info import simd_width_of
 comptime U32Ptr = UnsafePointer[UInt32, AnyOrigin[mut=True]]
 comptime U64Ptr = UnsafePointer[UInt64, AnyOrigin[mut=True]]
 comptime I64Ptr = UnsafePointer[Int64, AnyOrigin[mut=True]]
+comptime WAVEFRONT_LIMIT = 384
 
 
 def trim_prefix_suffix(
@@ -92,6 +93,93 @@ def find_mask(
     return -1
 
 
+def wavefront_distance(
+    text: U32Ptr,
+    tn: Int,
+    pattern: U32Ptr,
+    pm: Int,
+    wave: I64Ptr,
+) -> Int:
+    comptime W = simd_width_of[DType.float64]()
+    comptime SPAN = 2 * WAVEFRONT_LIMIT + 3
+    comptime STORAGE = 2 * SPAN
+    var negative = SIMD[DType.int64, W](-1)
+    var i = 0
+    while i + W <= STORAGE:
+        wave.store[alignment=8](i, negative)
+        i += W
+    while i < STORAGE:
+        wave[i] = -1
+        i += 1
+
+    var previous = wave
+    var current = wave + SPAN
+    var center = WAVEFRONT_LIMIT + 1
+    var x = 0
+    var y = 0
+    if x < tn and y < pm and text[x] == pattern[y]:
+        x += 1
+        y += 1
+        while x + W <= tn and y + W <= pm:
+            var equal = text.load[width=W, alignment=1](x).eq(
+                pattern.load[width=W, alignment=1](y)
+            )
+            if equal.cast[DType.uint32]().reduce_add() != UInt32(W):
+                break
+            x += W
+            y += W
+        while x < tn and y < pm and text[x] == pattern[y]:
+            x += 1
+            y += 1
+    if x == tn and y == pm:
+        return 0
+    previous[center] = Int64(x)
+
+    var limit = min(WAVEFRONT_LIMIT, max(tn, pm))
+    for score in range(1, limit + 1):
+        for diagonal in range(-score, score + 1):
+            var best = -1
+            var prior = Int(previous[center + diagonal])
+            var prior_y = prior - diagonal
+            if prior >= 0 and prior < tn and prior_y < pm:
+                best = prior + 1
+
+            prior = Int(previous[center + diagonal - 1])
+            if prior >= 0 and prior < tn:
+                best = max(best, prior + 1)
+
+            prior = Int(previous[center + diagonal + 1])
+            prior_y = prior - diagonal - 1
+            if prior >= 0 and prior_y < pm:
+                best = max(best, prior)
+
+            if best >= 0:
+                x = best
+                y = x - diagonal
+                if x < tn and y < pm and text[x] == pattern[y]:
+                    x += 1
+                    y += 1
+                    while x + W <= tn and y + W <= pm:
+                        var equal = text.load[width=W, alignment=1](x).eq(
+                            pattern.load[width=W, alignment=1](y)
+                        )
+                        if equal.cast[DType.uint32]().reduce_add() != UInt32(W):
+                            break
+                        x += W
+                        y += W
+                    while x < tn and y < pm and text[x] == pattern[y]:
+                        x += 1
+                        y += 1
+                best = x
+                if x == tn and y == pm:
+                    return score
+            current[center + diagonal] = Int64(best)
+        var temporary = previous
+        previous = current
+        current = temporary
+    return -1
+
+
 def unit_distance(
     text: U32Ptr,
     n: Int,
@@ -102,6 +190,7 @@ def unit_distance(
     values: I64Ptr,
     hash_size: Int,
     work: U64Ptr,
+    wavefront_enabled: Bool,
 ) -> Int:
     var start, text_end, pattern_end = trim_prefix_suffix(text, n, pattern, m)
     var tn = text_end - start
@@ -110,6 +199,17 @@ def unit_distance(
         return tn
     if tn == 0:
         return pm
+
+    if wavefront_enabled and min(tn, pm) >= 512:
+        var wave_result = wavefront_distance(
+            text + start,
+            tn,
+            pattern + start,
+            pm,
+            work.bitcast[Int64](),
+        )
+        if wave_result >= 0:
+            return wave_result
 
     comptime W = simd_width_of[DType.float64]()
     var words = (pm + 63) >> 6
@@ -147,13 +247,11 @@ def unit_distance(
             var eq = masks[symbol * words + w]
             var xv = eq | old_mv
             var addend = eq & old_pv
-            var first = addend + old_pv
-            var carry1 = first < addend
-            var second = first + add_carry
-            var carry2 = second < first
-            add_carry = 0
-            if carry1 or carry2:
-                add_carry = 1
+            var wide_sum = (
+                UInt128(addend) + UInt128(old_pv) + UInt128(add_carry)
+            )
+            var second = UInt64(wide_sum)
+            add_carry = UInt64(wide_sum >> 64)
             var xh = (second ^ old_pv) | eq
             var ph = old_mv | ~(xh | old_pv)
             var mh = old_pv & xh
@@ -276,6 +374,7 @@ def ml_distance_unit_u32(
     values_addr: Int,
     hash_size: Int,
     work_addr: Int,
+    wavefront_enabled: Int,
 ) abi("C") -> Int:
     if n == 0:
         return m
@@ -291,6 +390,7 @@ def ml_distance_unit_u32(
         I64Ptr(unsafe_from_address=values_addr),
         hash_size,
         U64Ptr(unsafe_from_address=work_addr),
+        wavefront_enabled != 0,
     )
 
 

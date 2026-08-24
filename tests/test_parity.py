@@ -105,6 +105,22 @@ def test_simd_trim_prefix_suffix_tails(common_length):
     )
 
 
+@pytest.mark.parametrize("match_run", [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17])
+def test_wavefront_simd_match_extension_tails(match_run):
+    repeated = "abcdefghijklmnopq"[:match_run]
+    repetitions = 600 // (match_run + 1) + 1
+    left = (repeated + "x") * repetitions + repeated
+    right = (repeated + "y") * repetitions + repeated
+    assert mojo.distance(left, right) == upstream.distance(left, right)
+
+
+def test_wavefront_limit_falls_back_to_multiword_myers():
+    left = (b"a" * 513) + bytes(range(256))
+    right = (b"b" * 513) + bytes(reversed(range(256)))
+    assert upstream.distance(left, right) > 384
+    assert mojo.distance(left, right) == upstream.distance(left, right)
+
+
 @pytest.mark.parametrize(
     "weights",
     [
