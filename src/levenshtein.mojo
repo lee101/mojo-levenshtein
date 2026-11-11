@@ -15,8 +15,8 @@ def trim_prefix_suffix(
     var start = 0
     var limit = min(n, m)
     while start + W <= limit:
-        var equal = a.load[width=W, alignment=1](start).eq(
-            b.load[width=W, alignment=1](start)
+        var equal = a.unsafe_load[width=W, alignment=1](start).eq(
+            b.unsafe_load[width=W, alignment=1](start)
         )
         if equal.cast[DType.uint32]().reduce_add() != UInt32(W):
             break
@@ -26,8 +26,8 @@ def trim_prefix_suffix(
     var an = n
     var bm = m
     while an - W >= start and bm - W >= start:
-        var equal = a.load[width=W, alignment=1](an - W).eq(
-            b.load[width=W, alignment=1](bm - W)
+        var equal = a.unsafe_load[width=W, alignment=1](an - W).eq(
+            b.unsafe_load[width=W, alignment=1](bm - W)
         )
         if equal.cast[DType.uint32]().reduce_add() != UInt32(W):
             break
@@ -121,8 +121,8 @@ def wavefront_distance(
         x += 1
         y += 1
         while x + W <= tn and y + W <= pm:
-            var equal = text.load[width=W, alignment=1](x).eq(
-                pattern.load[width=W, alignment=1](y)
+            var equal = text.unsafe_load[width=W, alignment=1](x).eq(
+                pattern.unsafe_load[width=W, alignment=1](y)
             )
             if equal.cast[DType.uint32]().reduce_add() != UInt32(W):
                 break
@@ -160,8 +160,8 @@ def wavefront_distance(
                     x += 1
                     y += 1
                     while x + W <= tn and y + W <= pm:
-                        var equal = text.load[width=W, alignment=1](x).eq(
-                            pattern.load[width=W, alignment=1](y)
+                        var equal = text.unsafe_load[width=W, alignment=1](x).eq(
+                            pattern.unsafe_load[width=W, alignment=1](y)
                         )
                         if equal.cast[DType.uint32]().reduce_add() != UInt32(W):
                             break
